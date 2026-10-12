@@ -5,7 +5,6 @@ import 'package:get/get.dart';
 import 'package:simple_live_app/app/controller/base_controller.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
-import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
@@ -27,16 +26,23 @@ class DouyinSearchController extends BaseController {
     this.site,
   );
 
-  var searchUrl = "https://www.douyin.com/search/dnf?type=live";
+  String get searchUrl => searchUrlFor(keyword, searchMode.value);
+
+  static String searchUrlFor(String keyword, int mode) {
+    return 'https://www.douyin.com/search/${Uri.encodeComponent(keyword.trim())}'
+        '?type=${mode == 1 ? 'user' : 'live'}';
+  }
 
   void reloadWebView() {
     if (keyword.isEmpty) {
       return;
     }
-    searchUrl =
-        "https://www.douyin.com/search/${Uri.encodeComponent(keyword)}?type=live";
-    if (Platform.isAndroid || Platform.isIOS) {
-      webViewController!.loadUrl(
+    pageError.value = false;
+    if (Platform.isAndroid ||
+        Platform.isIOS ||
+        Platform.isWindows ||
+        Platform.isMacOS) {
+      webViewController?.loadUrl(
         urlRequest: URLRequest(
           url: WebUri(searchUrl),
         ),
@@ -49,29 +55,39 @@ class DouyinSearchController extends BaseController {
   }
 
   void onLoadStart(InAppWebViewController controller, Uri? uri) async {
+    pageError.value = false;
     pageLoadding.value = true;
   }
 
   Future<bool?> onCreateWindow(InAppWebViewController controller,
       CreateWindowAction createWindowAction) async {
-    if (createWindowAction.request.url?.host == "live.douyin.com") {
-      {
-        var regExp = RegExp(r"live\.douyin\.com/([\d|\w]+)");
-        var id = regExp
-                .firstMatch(createWindowAction.request.url.toString())
-                ?.group(1) ??
-            "";
-
-        AppNavigator.toLiveRoomDetail(site: site, roomId: id);
-        return false;
-      }
+    final uri = createWindowAction.request.url;
+    final id = roomIdFromUrl(uri);
+    if (id != null) {
+      AppNavigator.toLiveRoomDetail(site: site, roomId: id);
+    } else if (uri != null && (uri.scheme == 'https' || uri.scheme == 'http')) {
+      await controller.loadUrl(urlRequest: URLRequest(url: uri));
     }
-
     return false;
   }
 
+  static String? roomIdFromUrl(Uri? uri) {
+    if (uri == null ||
+        uri.host != 'live.douyin.com' ||
+        uri.pathSegments.isEmpty) {
+      return null;
+    }
+    final id = uri.pathSegments.first;
+    return RegExp(r'^\d+$').hasMatch(id) ? id : null;
+  }
+
   void openBrowser() {
-    launchUrlString(searchUrl);
-    Get.offAndToNamed(RoutePath.kTools);
+    launchUrlString(searchUrl, mode: LaunchMode.externalApplication);
+  }
+
+  @override
+  void onClose() {
+    webViewController = null;
+    super.onClose();
   }
 }

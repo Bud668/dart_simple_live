@@ -30,6 +30,7 @@ mixin PlayerMixin {
   late final player = Player(
     configuration: PlayerConfiguration(
       title: "Simple Live Player",
+      bufferSize: AppSettingsController.instance.playerBufferSize.value * 1024 * 1024,
       logLevel: AppSettingsController.instance.logEnable.value
           ? MPVLogLevel.info
           : MPVLogLevel.error,
@@ -39,6 +40,11 @@ mixin PlayerMixin {
   /// 初始化播放器并设置 ao 参数
   Future<void> initializePlayer() async {
     var pp = player.platform as NativePlayer;
+    if (Platform.isWindows) {
+      await pp.setProperty('network-timeout', '15');
+      // The installed player's disk cache fails to initialize; use its RAM cache.
+      await pp.setProperty('cache-on-disk', 'no');
+    }
     // 设置音频输出驱动
     if (AppSettingsController.instance.customPlayerOutput.value) {
       if (player.platform is NativePlayer) {
@@ -691,6 +697,7 @@ class PlayerController extends BaseController
       if (event) {
         WakelockPlus.enable();
         Log.d("Playing");
+        mediaPlaying();
       }
     });
 
@@ -729,6 +736,8 @@ class PlayerController extends BaseController
   void mediaEnd() {
     WakelockPlus.disable();
   }
+
+  void mediaPlaying() {}
 
   void mediaError(String error) {
     WakelockPlus.disable();

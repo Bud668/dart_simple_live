@@ -682,31 +682,19 @@ class DouyinSite implements LiveSite {
         "webid": "7382872326016435738",
       },
     );
-    //var requlestUrl = await getAbogusUrl(uri.toString());
-    var requlestUrl = uri.toString();
-    var headResp = await HttpClient.instance.head(
-      'https://live.douyin.com',
-      header: headers,
+    final requestUrl = DouyinSign.getAbogusUrl(
+      uri.toString(), kDefaultUserAgent,
     );
-    var dyCookie = "";
-    headResp.headers["set-cookie"]?.forEach((element) {
-      var cookie = element.split(";")[0];
-      if (cookie.contains("ttwid")) {
-        dyCookie += "$cookie;";
-      }
-      if (cookie.contains("__ac_nonce")) {
-        dyCookie += "$cookie;";
-      }
-    });
+    final requestHeaders = Map<String, dynamic>.from(await getRequestHeaders());
 
     var result = await HttpClient.instance.getJson(
-      requlestUrl,
+      requestUrl,
       queryParameters: {},
       header: {
+        ...requestHeaders,
         "Authority": 'www.douyin.com',
         'accept': 'application/json, text/plain, */*',
         'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'cookie': dyCookie,
         'priority': 'u=1, i',
         'referer':
             'https://www.douyin.com/search/${Uri.encodeComponent(keyword)}?type=live',
@@ -720,14 +708,19 @@ class DouyinSite implements LiveSite {
         'user-agent': kDefaultUserAgent,
       },
     );
-    if (result == "" || result == 'blocked') {
-      throw Exception("抖音直播搜索被限制，请稍后再试");
+    if (result is! Map || result['data'] is! List ||
+        (result['status_code'] != null && result['status_code'].toString() != '0')) {
+      throw Exception("抖音搜索暂不可用，请使用网页搜索");
     }
     var items = <LiveRoomItem>[];
     for (var item in result["data"] ?? []) {
-      var itemData = json.decode(item["lives"]["rawdata"].toString());
+      final rawData = item["lives"]?["rawdata"];
+      if (rawData == null) continue;
+      final itemData = rawData is Map ? rawData : json.decode(rawData.toString());
+      final webRid = itemData["owner"]?["web_rid"]?.toString() ?? '';
+      if (webRid.isEmpty) continue;
       var roomItem = LiveRoomItem(
-        roomId: itemData["owner"]["web_rid"].toString(),
+        roomId: webRid,
         title: itemData["title"].toString(),
         cover: itemData["cover"]["url_list"][0].toString(),
         userName: itemData["owner"]["nickname"].toString(),

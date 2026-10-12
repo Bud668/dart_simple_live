@@ -1,0 +1,3 @@
+dependency_overrides:
+  dart_quickjs:
+    path: ../vendor/dart_quickjs

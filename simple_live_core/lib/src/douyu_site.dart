@@ -104,6 +104,13 @@ class DouyuSite implements LiveSite {
       formUrlEncoded: true,
     );
 
+    if (result is! Map ||
+        result['error'] != 0 ||
+        result['data'] is! Map ||
+        result['data']['cdnsWithName'] is! List ||
+        result['data']['multirates'] is! List) {
+      throw Exception('斗鱼播放清晰度接口返回异常');
+    }
     var cdns = <String>[];
     for (var item in result["data"]["cdnsWithName"]) {
       cdns.add(item["cdn"].toString());
@@ -138,12 +145,22 @@ class DouyuSite implements LiveSite {
     var args = detail.data.toString();
     var data = quality.data as DouyuPlayData;
 
-    List<String> urls = [];
-    for (var item in data.cdns) {
-      var url = await getPlayUrl(detail.roomId, args, data.rate, item);
-      if (url.isNotEmpty) {
-        urls.add(url);
-      }
+    Object? lastError;
+    // One failed CDN must not discard addresses returned by the others.
+    // Request them together so a slow CDN does not delay every following CDN.
+    final results = await Future.wait(
+      data.cdns.toSet().map((cdn) async {
+        try {
+          return await getPlayUrl(detail.roomId, args, data.rate, cdn);
+        } catch (error) {
+          lastError = error;
+          return '';
+        }
+      }),
+    );
+    final urls = results.where((url) => url.isNotEmpty).toSet().toList();
+    if (urls.isEmpty) {
+      throw lastError ?? StateError('斗鱼没有返回有效播放地址');
     }
     return LivePlayUrl(urls: urls);
   }
@@ -166,7 +183,22 @@ class DouyuSite implements LiveSite {
       formUrlEncoded: true,
     );
 
-    return "${result["data"]["rtmp_url"]}/${HtmlUnescape().convert(result["data"]["rtmp_live"].toString())}";
+    if (result is! Map || result['error'] != 0 || result['data'] is! Map) {
+      throw Exception('斗鱼播放地址接口返回异常');
+    }
+    final base = result['data']['rtmp_url'];
+    final path = result['data']['rtmp_live'];
+    if (base is! String || base.isEmpty || path is! String || path.isEmpty) {
+      throw Exception('斗鱼播放地址为空');
+    }
+    final url = '$base/${HtmlUnescape().convert(path)}';
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        uri.host.isEmpty ||
+        (uri.scheme != 'http' && uri.scheme != 'https')) {
+      throw Exception('斗鱼播放地址格式异常');
+    }
+    return url;
   }
 
   @override
@@ -197,6 +229,11 @@ class DouyuSite implements LiveSite {
   @override
   Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
     Map roomInfo = await _getRoomInfo(roomId);
+    final showStatus = int.tryParse(roomInfo['show_status'].toString());
+    final videoLoop = int.tryParse(roomInfo['videoLoop'].toString());
+    if (showStatus == null) {
+      throw Exception('斗鱼没有返回有效开播状态');
+    }
 
     Map h5RoomInfo = await HttpClient.instance.getJson(
       "https://www.douyu.com/swf_api/h5room/$roomId",
@@ -247,11 +284,11 @@ class DouyuSite implements LiveSite {
       userAvatar: roomInfo["owner_avatar"].toString(),
       introduction: roomInfo["show_details"].toString(),
       notice: "",
-      status: roomInfo["show_status"] == 1 && roomInfo["videoLoop"] != 1,
+      status: showStatus == 1 && videoLoop != 1,
       danmakuData: roomInfo["room_id"].toString(),
       data: DouyuSign.getSign(crptext, roomInfo["room_id"].toString()),
       url: "https://www.douyu.com/$roomId",
-      isRecord: roomInfo["videoLoop"] == 1,
+      isRecord: videoLoop == 1,
       showTime: showTime,
     );
   }

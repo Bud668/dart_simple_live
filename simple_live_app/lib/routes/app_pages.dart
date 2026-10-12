@@ -4,7 +4,7 @@ import 'package:get/get.dart';
 import 'package:simple_live_app/modules/category/detail/category_detail_controller.dart';
 import 'package:simple_live_app/modules/category/detail/category_detail_page.dart';
 import 'package:simple_live_app/modules/indexed/indexed_controller.dart';
-import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
+import 'package:simple_live_app/services/live_room_session_service.dart';
 import 'package:simple_live_app/modules/live_room/live_room_page.dart';
 import 'package:simple_live_app/modules/settings/follow_settings_page.dart';
 import 'package:simple_live_app/modules/sync/remote_sync/webdav/remote_sync_webdav_config_page.dart';
@@ -97,13 +97,13 @@ class AppPages {
     //直播间
     GetPage(
       name: RoutePath.kLiveRoomDetail,
-      page: () => const LiveRoomPage(),
-      binding: BindingsBuilder.put(
-        () => LiveRoomController(
-          pSite: Get.arguments,
-          pRoomId: Get.parameters["roomId"] ?? "",
-        ),
-      ),
+      page: () => LiveRoomPage(
+          controller: LiveRoomSessionService.instance.active.value!),
+      transitionDuration: Duration.zero,
+      binding: BindingsBuilder(() {
+        LiveRoomSessionService.instance
+            .enter(Get.arguments, Get.parameters['roomId'] ?? '');
+      }),
     ),
     //弹幕设置
     GetPage(
@@ -226,7 +226,7 @@ class AppPages {
       page: () => const RemoteSyncWebDAVPage(),
       bindings: [
         BindingsBuilder.put(
-              () => RemoteSyncWebDAVController(),
+          () => RemoteSyncWebDAVController(),
         ),
       ],
     ),

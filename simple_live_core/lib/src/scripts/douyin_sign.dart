@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 import 'package:dart_quickjs/dart_quickjs.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -10653,17 +10654,23 @@ function getMSSDKSignature(msStub, userAgent) {
       memoryLimit: 4 * 1024 * 1024,
       maxStackSize: 64 * 1024,
     );
-    final msToken = generateMsToken(107);
-    var params = ('$url&msToken=$msToken').split('?')[1];
-    var query = params.contains("?") ? params.split("?")[1] : params;
-    var jsCode = kABogus;
-    flutterJs.eval(jsCode);
-    // 执行getABogus函数
-    var aBogus = flutterJs.eval("getABogus('$query', '$userAgent')");
-    flutterJs.dispose();
-    var newUrl =
-        '$url&msToken=${Uri.encodeComponent(msToken)}&a_bogus=${Uri.encodeComponent(aBogus)}';
-    return newUrl;
+    try {
+      final uri = Uri.parse(url);
+      final params = Map<String, String>.from(uri.queryParameters)
+        ..remove('a_bogus');
+      if (params['msToken']?.isNotEmpty != true) {
+        params['msToken'] = generateMsToken(107);
+      }
+      final unsigned = uri.replace(queryParameters: params);
+      flutterJs.eval(kABogus);
+      // Sign precisely the query that will be sent, with one msToken only.
+      final aBogus = flutterJs.eval(
+        'getABogus(${jsonEncode(unsigned.query)}, ${jsonEncode(userAgent)})',
+      );
+      return '$unsigned&a_bogus=${Uri.encodeComponent(aBogus)}';
+    } finally {
+      flutterJs.dispose();
+    }
   }
 
   static String getSignature(String roomId, String uniqueId) {

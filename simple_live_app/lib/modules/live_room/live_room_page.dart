@@ -14,6 +14,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 import 'package:simple_live_app/services/follow_service.dart';
+import 'package:simple_live_app/services/live_room_session_service.dart';
 import 'package:simple_live_app/widgets/desktop_refresh_button.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
 import 'package:simple_live_app/widgets/keep_alive_wrapper.dart';
@@ -25,8 +26,9 @@ import 'package:simple_live_app/widgets/settings/settings_switch.dart';
 import 'package:simple_live_app/widgets/superchat_card.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
-class LiveRoomPage extends GetView<LiveRoomController> {
-  const LiveRoomPage({Key? key}) : super(key: key);
+class LiveRoomPage extends StatelessWidget {
+  final LiveRoomController controller;
+  const LiveRoomPage({required this.controller, Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -87,28 +89,30 @@ class LiveRoomPage extends GetView<LiveRoomController> {
           );
         }
         if (controller.fullScreenState.value) {
-          return PopScope(
-            canPop: false,
-            onPopInvokedWithResult: (e, r) {
-              controller.exitFull();
-            },
-            child: Scaffold(
-              body: buildMediaPlayer(),
-            ),
-          );
+          return Scaffold(body: buildMediaPlayer());
         } else {
           return buildPageUI();
         }
       },
     );
-    if (!Platform.isAndroid) {
-      return page;
-    }
-    return PiPSwitcher(
-      floating: controller.pip,
-      childWhenDisabled: page,
-      childWhenEnabled: buildMediaPlayer(),
-    );
+    return Obx(() => PopScope(
+          canPop: !controller.fullScreenState.value,
+          onPopInvokedWithResult: (didPop, result) {
+            if (didPop) {
+              LiveRoomSessionService.instance.leave(controller);
+            } else if (controller.smallWindowState.value) {
+              controller.exitSmallWindow();
+            } else if (controller.fullScreenState.value) {
+              controller.exitFull();
+            }
+          },
+          child: !Platform.isAndroid
+              ? page
+              : PiPSwitcher(
+                  floating: controller.pip,
+                  childWhenDisabled: page,
+                  childWhenEnabled: buildMediaPlayer()),
+        ));
   }
 
   Widget buildPageUI() {
@@ -254,36 +258,73 @@ class LiveRoomPage extends GetView<LiveRoomController> {
       boxFit = BoxFit.contain;
       aspectRatio = 4 / 3;
     }
-    return Stack(
-      children: [
-        Video(
-          key: controller.globalPlayerKey,
-          controller: controller.videoController,
-          pauseUponEnteringBackgroundMode:
-              AppSettingsController.instance.playerAutoPause.value,
-          resumeUponEnteringForegroundMode:
-              AppSettingsController.instance.playerAutoPause.value,
-          controls: (state) {
-            return playerControls(state, controller);
-          },
-          aspectRatio: aspectRatio,
-          fit: boxFit,
-          // 自己实现
-          wakelock: false,
-        ),
-        Obx(
-          () => Visibility(
-            visible: !controller.liveStatus.value,
-            child: const Center(
-              child: Text(
-                "未开播",
-                style: TextStyle(fontSize: 16, color: Colors.white),
+    return Obx(() {
+      final session = LiveRoomSessionService.instance;
+      if (session.floating.value ||
+          !identical(session.active.value, controller)) {
+        return const ColoredBox(color: Colors.black);
+      }
+      return Stack(
+        children: [
+          Video(
+            key: controller.globalPlayerKey,
+            controller: controller.videoController,
+            pauseUponEnteringBackgroundMode:
+                AppSettingsController.instance.playerAutoPause.value,
+            resumeUponEnteringForegroundMode:
+                AppSettingsController.instance.playerAutoPause.value,
+            controls: (state) {
+              return playerControls(state, controller);
+            },
+            aspectRatio: aspectRatio,
+            fit: boxFit,
+            // 自己实现
+            wakelock: false,
+          ),
+          Obx(
+            () => Visibility(
+              visible: !controller.liveStatus.value,
+              child: const Center(
+                child: Text(
+                  "未开播",
+                  style: TextStyle(fontSize: 16, color: Colors.white),
+                ),
               ),
             ),
           ),
-        ),
-      ],
-    );
+          Obx(() {
+            if (controller.reconnecting.value) {
+              return const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 12),
+                    Text('正在重新连接直播', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              );
+            }
+            if (controller.liveStatus.value &&
+                controller.errorMsg.value.isNotEmpty) {
+              return Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(controller.errorMsg.value,
+                        style: const TextStyle(color: Colors.white)),
+                    TextButton(
+                        onPressed: controller.refreshRoom,
+                        child: const Text('刷新重试')),
+                  ],
+                ),
+              );
+            }
+            return const SizedBox.shrink();
+          }),
+        ],
+      );
+    });
   }
 
   Widget buildUserProfile(BuildContext context) {
