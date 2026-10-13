@@ -11,11 +11,13 @@ import 'package:hive/hive.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:simple_live_app/main.dart' as app;
 import 'package:simple_live_app/app/sites.dart';
+import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/live_room_session_service.dart';
 import 'package:simple_live_app/services/sync_service.dart';
 import 'package:simple_live_app/modules/multi_live/multi_live_controller.dart';
+import 'package:simple_live_app/modules/live_room/live_room_page.dart';
 import 'package:simple_live_app/modules/multi_live/multi_live_room.dart';
 // Private client access is used only for counting playback requests in this probe.
 // ignore: implementation_imports
@@ -133,6 +135,8 @@ Future<void> main(List<String> args) async {
       !room.loading.value;
   try {
     await app.initServices();
+    // The isolated fixture starts after onboarding, like an existing install.
+    AppSettingsController.instance.setNoFirstRun();
     await windowManager.ensureInitialized();
     await windowManager.setSize(const Size(1280, 860));
     runApp(RepaintBoundary(key: boundaryKey, child: const app.MyApp()));
@@ -387,6 +391,10 @@ Future<void> main(List<String> args) async {
         .toString()
         .replaceAll(RegExp(r'(https?://[^\s?]+)\?[^\s]+'), r'$1?[redacted]');
     report['stack'] = stack.toString();
+    report['currentRoute'] = Get.currentRoute;
+    report['visibleSingleRoom'] =
+        findElement((widget) => widget is LiveRoomPage) != null;
+    await screenshot('failure');
     report['flutterErrors'] = flutterErrors;
     final active = LiveRoomSessionService.instance.active.value;
     if (active != null) {
