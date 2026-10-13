@@ -1,29 +1,28 @@
-# Simple Live 小窗与稳定性修复 V3
+# Simple Live 多画面 V4
 
-这是 [xiaoyaocz/dart_simple_live](https://github.com/xiaoyaocz/dart_simple_live) 的修改版，基于 ba828e6783b176ea5709fcd09f0eb01dfaceeb51（1.11.4+11104），保留原作者版权和 GPL-3.0 许可证。
+基于 [xiaoyaocz/dart_simple_live](https://github.com/xiaoyaocz/dart_simple_live) 的修改版，上游基线 ba828e6783b176ea5709fcd09f0eb01dfaceeb51（1.11.4+11104），保留原作者版权与 GPL-3.0 许可证。
 
-[下载 Windows x64 便携包](https://github.com/Bud668/dart_simple_live/releases/latest) · [修复与验证](docs/RELEASE_V3.md) · [构建说明](docs/BUILD.md)
+[下载 Windows x64 便携包](https://github.com/Bud668/dart_simple_live/releases/latest) · [V4 使用说明](docs/RELEASE_V4.md) · [V3 修复记录](docs/RELEASE_V3.md) · [构建说明](docs/BUILD.md)
 
-## V3 改动
+## V4 多画面
 
-- 返回首页、搜索页时在 APP 内悬浮小窗继续播放；可拖动、暂停、关闭，点击返回原直播间。切房替换原播放，只保留一个会话。
-- 斗鱼断流后重新获取房间状态、签名与播放地址，优先换线；只有平台确认下播才显示“未开播”。加入卡流检测、请求失效处理和有限重试。
-- 斗鱼线路并发获取，一条失败保留其他可用线路；Windows 使用内存缓存。
-- 抖音主播搜索使用内嵌官方“用户”页，房间搜索接口失败转官方“直播”页；旧搜索响应不会覆盖新关键词。
+- 支持 APP 内 2、3、4、9 画面，从关注列表、房间号或手机分享链接添加直播。
+- 每格可暂停、刷新、切清晰度、放大和关闭。双击放大或还原；每一路独立检测卡流和有限重连。
+- 点喇叭切换声音，同一时间只收听一路；支持全部静音。
+- 从直播间或悬浮小窗进入，会将当前房间接入第一格。返回首页会停止全部多画面。
+- 默认中间清晰度，每路缓存最多 16 MiB。九路播放的实际负载取决于视频分辨率、解码器和网络。
 
-当前实际验证平台为 Windows x64。抖音官网可能要求自行登录或验证码，登录后的完整搜索结果和跳转尚未验收。其他平台保留源码，未发布本次二进制包。
+首页右上角网格按钮、「我的 → 多画面」以及直播间「加入多画面」均可进入。V3 的普通直播间悬浮小窗、斗鱼断流恢复与抖音官方网页搜索保留。抖音官网可能要求登录或验证码，登录后的完整搜索结果和跳转尚未验收。
 
-## 使用
+## 使用与验证
 
-退出原来的 Simple Live，完整解压发布页上的 Simple-Live-Windows-x64-V3.zip，运行 simple_live_app.exe。窗口标题为“Simple Live（小窗修复 V3）”。DLL 与 data 目录必须保留；新旧版本共享设置目录，请只运行一个版本。
+退出旧版后完整解压 Simple-Live-Windows-x64-V4.zip，运行 simple_live_app.exe，保留全部 DLL 与 data 目录。窗口标题为「Simple Live（多画面 V4）」。新旧版本共享用户设置，请只运行一个正式版本。
 
-观看直播时返回上一页即显示小窗。点击画面返回时保留暂停状态，关闭小窗会停止播放并释放播放器。
+修改代码静态检查及 33 项回归测试通过。Windows 实机验证范围和结果见发布附件 Windows-runtime-validation.json。其他平台保留源码，本次没有进行二进制验证。
 
-26 项回归测试通过，Debian 生成的验证程序已在 Windows 完成真实视频和小窗操作验证。V2 恢复逻辑曾完成 12 分钟实播、4 次模拟断流并恢复；这些结果不能覆盖所有网络故障。
+Flutter 3.38.10 / Dart 3.10.9。Dart AOT 与资源在 Debian 构建，通过 Wine 使用匹配的 Windows snapshot compiler。Windows 启动器和原生插件复用已有运行文件，未重新编译原生代码。源码、许可与第三方声明随版本提供。
 
-Flutter 3.38.10 / Dart 3.10.9。Windows 包的 Dart AOT 和资源在 Debian 构建，经 Wine 使用匹配的 Windows snapshot compiler。EXE 启动器和插件 DLL 沿用已有 1.11.4 Windows 文件，配套 Flutter 引擎已更新；本次没有重新编译 Windows 原生代码。
-
-原项目文档见 [UPSTREAM_README.md](docs/UPSTREAM_README.md)。原始参考项目和声明保留如下。
+原项目文档见 [UPSTREAM_README.md](docs/UPSTREAM_README.md)。以下保留上游项目介绍。
 
 ---
 

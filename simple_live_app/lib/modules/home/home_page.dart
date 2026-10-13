@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/sites.dart';
@@ -39,6 +40,8 @@ class HomePage extends GetView<HomeController> {
               .toList(),
         ),
         actions: [
+          const IconButton(tooltip: '多画面', onPressed: AppNavigator.toMultiLive,
+            icon: Icon(Icons.grid_view)),
           IconButton(
             onPressed: controller.toSearch,
             icon: const Icon(Icons.search),

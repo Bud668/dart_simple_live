@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:floating/floating.dart';
 import 'package:flutter/material.dart';
+import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:get/get.dart';
 import 'package:lottie/lottie.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -812,6 +813,8 @@ class LiveRoomPage extends StatelessWidget {
 
   List<Widget> buildAppbarActions(BuildContext context) {
     return [
+      const IconButton(tooltip: '加入多画面', onPressed: AppNavigator.toMultiLive,
+        icon: Icon(Icons.grid_view)),
       IconButton(
         onPressed: () {
           showMore();

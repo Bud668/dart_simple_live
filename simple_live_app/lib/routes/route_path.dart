@@ -1,5 +1,6 @@
 /// 路由路径
 class RoutePath {
+  static const kMultiLive = "/multi-live";
   /// 首页
   static const kIndex = "/index";
 

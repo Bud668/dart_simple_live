@@ -13,7 +13,7 @@ pubspec_overrides.yaml 使用相对路径 ../vendor/dart_quickjs。Windows x64 h
 回归测试：
 
     cd simple_live_app
-    flutter test test/live_playback_recovery_test.dart test/live_playback_monitor_test.dart test/douyin_search_test.dart test/douyu_play_urls_test.dart test/live_room_session_test.dart
+    flutter test test/live_playback_recovery_test.dart test/live_playback_monitor_test.dart test/douyin_search_test.dart test/douyu_play_urls_test.dart test/live_room_session_test.dart test/multi_live_test.dart
 
 ## 本次 Debian 构建
 
@@ -32,7 +32,7 @@ tools/debian 保留已配置环境的重复构建脚本，不是首次安装一�
     docker build -t simple-live-build:v3 .
     ./run-build.sh
 
-容器限制 6 CPU、8 GiB 内存，先编译发布与小窗验证入口，再检查和测试。输出在 simple_live_app/build/remote_release 与 remote_probe；需结合匹配的 Windows runtime 打包，不能单独运行。
+容器限制 6 CPU、8 GiB 内存，先编译发布、小窗与多画面验证入口，再检查和测试。输出在 simple_live_app/build/remote_release、remote_probe 与 remote_multi_probe；需结合匹配的 Windows runtime 打包，不能单独运行。
 
 清空 Flutter 编译缓存、保留 SDK 和依赖后，实测发布 AOT/资源构建 29.23 秒，重复 2.61 秒；不含首次准备、传输及 Windows 验证。
 

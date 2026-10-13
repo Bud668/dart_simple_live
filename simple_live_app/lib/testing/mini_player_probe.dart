@@ -120,8 +120,10 @@ Future<void> main(List<String> args) async {
     await Future<void>.delayed(const Duration(seconds: 2));
     final rooms = <String>[];
     final site = Sites.allSites['douyu']!;
+    if (args.length > 1) rooms.addAll(args[1].split(','));
     final recommended = await site.liveSite.getRecommendRooms();
     for (final item in recommended.items.take(8)) {
+      if (rooms.length >= 2) break;
       final detail = await site.liveSite.getRoomDetail(roomId: item.roomId);
       if (detail.status) rooms.add(detail.roomId);
       if (rooms.length >= 2) break;

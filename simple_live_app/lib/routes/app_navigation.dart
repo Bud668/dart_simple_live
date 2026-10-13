@@ -18,6 +18,17 @@ import 'package:simple_live_core/simple_live_core.dart';
 /// * 需要参数的页面都应使用此类
 /// * 如不需要参数，可以使用Get.toNamed
 class AppNavigator {
+  static void toMultiLive() {
+    final path = Uri.parse(Get.currentRoute).path;
+    if (path == RoutePath.kMultiLive) return;
+    LiveRoomSessionService.instance.floating.value = false;
+    if (path == RoutePath.kLiveRoomDetail) {
+      Get.offNamed(RoutePath.kMultiLive);
+    } else {
+      Get.toNamed(RoutePath.kMultiLive);
+    }
+  }
+
   /// 跳转至分类详情
   static void toCategoryDetail(
       {required Site site, required LiveSubCategory category}) {

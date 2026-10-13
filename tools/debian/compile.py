@@ -7,7 +7,7 @@ os.environ["PROGRAMFILES(X86)"]="/workspace/empty-program-files"
 os.environ["XDG_RUNTIME_DIR"]="/workspace/wine-runtime"
 pathlib.Path("/workspace/wine-runtime").mkdir(mode=0o700,exist_ok=True)
 results={}
-for target,name in [('lib/main.dart','remote_release'),('lib/testing/mini_player_probe.dart','remote_probe')]:
+for target,name in [('lib/main.dart','remote_release'),('lib/testing/mini_player_probe.dart','remote_probe'),('lib/testing/multi_live_probe.dart','remote_multi_probe')]:
  start=time.monotonic()
  command=[dart,tool,'assemble','--output=build/'+name,'-dTargetPlatform=windows-x64','-dBuildMode=release','-dTargetFile='+target,'release_bundle_windows-x64_assets']
  with (root/'logs'/f'{name}.log').open('w') as log:

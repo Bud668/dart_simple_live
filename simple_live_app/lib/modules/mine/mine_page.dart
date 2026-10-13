@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:remixicon/remixicon.dart';
@@ -110,6 +111,11 @@ class MinePage extends StatelessWidget {
               indent: 12,
               endIndent: 12,
               color: Colors.grey.withAlpha(25),
+            ),
+            const ListTile(
+              leading: Icon(Icons.grid_view), title: Text('多画面'),
+              subtitle: Text('同时观看 2 / 3 / 4 / 9 个直播间'),
+              trailing: Icon(Icons.chevron_right), onTap: AppNavigator.toMultiLive,
             ),
             ListTile(
               leading: const Icon(Remix.link),

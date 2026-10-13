@@ -26,11 +26,13 @@ mixin PlayerMixin {
   GlobalKey<VideoState> globalPlayerKey = GlobalKey<VideoState>();
   GlobalKey globalDanmuKey = GlobalKey();
 
+  int get playbackBufferSizeMb => AppSettingsController.instance.playerBufferSize.value;
+
   /// 播放器实例
   late final player = Player(
     configuration: PlayerConfiguration(
       title: "Simple Live Player",
-      bufferSize: AppSettingsController.instance.playerBufferSize.value * 1024 * 1024,
+      bufferSize: playbackBufferSizeMb * 1024 * 1024,
       logLevel: AppSettingsController.instance.logEnable.value
           ? MPVLogLevel.info
           : MPVLogLevel.error,
