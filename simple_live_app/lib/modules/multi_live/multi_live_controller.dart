@@ -15,15 +15,12 @@ class MultiLiveController extends GetxController {
   final Future<void> Function() _afterFrame;
   final double volume;
   final rooms = <MultiLiveRoom>[].obs;
-  final layout = 2.obs;
-  final audioRoom = Rxn<MultiLiveRoom>();
+  final audibleRooms = <MultiLiveRoom>{}.obs;
   final focusedRoom = Rxn<MultiLiveRoom>();
   final audioError = ''.obs;
   bool _closed = false;
-  bool _mutedByUser = false;
   Future<void> _audioTask = Future<void>.value();
   final _retiring = <Future<void>>{};
-  static const layouts = [2, 3, 4, 9];
 
   MultiLiveRoom? add(Site site, String id) {
     if (_closed || id.trim().isEmpty) return null;
@@ -36,19 +33,10 @@ class MultiLiveController extends GetxController {
     if (rooms.length >= 9) return null;
     final room = _createRoom(site, id.trim());
     rooms.add(room);
-    if (rooms.length > layout.value) {
-      layout.value = layouts.firstWhere((size) => size >= rooms.length);
-    }
-    room.start();
-    if (audioRoom.value == null && !_mutedByUser) unawaited(selectAudio(room));
-    return room;
-  }
-
-  bool setLayout(int size) {
-    if (!layouts.contains(size) || rooms.length > size) return false;
     focusedRoom.value = null;
-    layout.value = size;
-    return true;
+    // New streams always start muted, including those imported from a mini player.
+    room.start();
+    return room;
   }
 
   void toggleFocus(MultiLiveRoom room) {
@@ -56,31 +44,36 @@ class MultiLiveController extends GetxController {
     focusedRoom.value = identical(focusedRoom.value, room) ? null : room;
   }
 
-  Future<void> selectAudio(MultiLiveRoom? room) {
-    if (_closed || (room != null && !rooms.contains(room))) {
-      return Future.value();
+  bool isAudible(MultiLiveRoom room) => audibleRooms.contains(room);
+
+  Future<void> setAudioEnabled(MultiLiveRoom room, bool enabled) {
+    if (_closed || !rooms.contains(room)) return Future.value();
+    if (enabled) {
+      audibleRooms.add(room);
+    } else {
+      audibleRooms.remove(room);
     }
-    _mutedByUser = room == null;
-    audioRoom.value = room;
+    return _queueAudio();
+  }
+
+  Future<void> toggleAudio(MultiLiveRoom room) =>
+      setAudioEnabled(room, !isAudible(room));
+
+  Future<void> muteAll() {
+    audibleRooms.clear();
     return _queueAudio();
   }
 
   Future<void> _queueAudio() {
-    // Mute all first and serialize changes so rapid clicks never unmute two rooms.
+    // Each queued update reads the latest independent choices for all rooms.
     _audioTask = _audioTask.then((_) async {
       if (_closed) return;
-      final selected = audioRoom.value;
-      await Future.wait(rooms.toList().map((room) => room.setAudioVolume(0)));
-      if (!_closed &&
-          selected != null &&
-          identical(selected, audioRoom.value) &&
-          rooms.contains(selected) &&
-          !selected.isClosed) {
-        await selected.setAudioVolume(volume);
-      }
+      await Future.wait(rooms
+          .toList()
+          .map((room) => room.setAudioVolume(isAudible(room) ? volume : 0)));
       audioError.value = '';
     }).catchError((Object _) {
-      audioError.value = '声音切换失败，请重新选择';
+      audioError.value = '声音设置失败，请重试';
     });
     return _audioTask;
   }
@@ -88,10 +81,7 @@ class MultiLiveController extends GetxController {
   Future<void> remove(MultiLiveRoom room) async {
     if (!rooms.remove(room)) return;
     if (identical(focusedRoom.value, room)) focusedRoom.value = null;
-    if (identical(audioRoom.value, room)) {
-      audioRoom.value = _mutedByUser ? null : rooms.firstOrNull;
-      unawaited(_queueAudio());
-    }
+    audibleRooms.remove(room);
     final retiring = _retire(room);
     _retiring.add(retiring);
     try {
@@ -112,7 +102,7 @@ class MultiLiveController extends GetxController {
   Future<void> clear() async {
     final previous = rooms.toList();
     rooms.clear();
-    audioRoom.value = null;
+    audibleRooms.clear();
     focusedRoom.value = null;
     final work = previous.map(_retire).toList();
     _retiring.addAll(work);

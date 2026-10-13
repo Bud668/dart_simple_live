@@ -110,7 +110,7 @@ Future initWindow() async {
   WindowOptions windowOptions = const WindowOptions(
     minimumSize: Size(280, 280),
     center: true,
-    title: "Simple Live（多画面 V4）",
+    title: "Simple Live（多画面 V5）",
   );
   windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.show();

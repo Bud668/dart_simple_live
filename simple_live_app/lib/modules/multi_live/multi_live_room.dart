@@ -21,6 +21,7 @@ class MultiLiveRoom with PlayerMixin {
   final loading = true.obs;
   final reconnecting = false.obs;
   final paused = false.obs;
+  final danmakuEnabled = false.obs;
   final offline = false.obs;
   final error = ''.obs;
   final qualities = <LivePlayQuality>[].obs;

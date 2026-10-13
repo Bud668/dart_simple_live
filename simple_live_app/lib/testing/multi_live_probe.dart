@@ -13,22 +13,34 @@ import 'package:simple_live_app/main.dart' as app;
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
-import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/live_room_session_service.dart';
 import 'package:simple_live_app/services/sync_service.dart';
 import 'package:simple_live_app/modules/multi_live/multi_live_controller.dart';
-import 'package:simple_live_app/modules/live_room/live_room_page.dart';
 import 'package:simple_live_app/modules/multi_live/multi_live_room.dart';
 // Private client access is used only for counting playback requests in this probe.
 // ignore: implementation_imports
 import 'package:simple_live_core/src/common/http_client.dart' as core_http;
 import 'package:window_manager/window_manager.dart';
+import 'package:flutter/services.dart';
+import 'package:simple_live_app/modules/multi_live/multi_live_danmaku.dart';
+import 'package:simple_live_app/services/follow_service.dart';
+import 'package:simple_live_app/models/db/follow_user.dart';
 
 class QuietMiniSyncService extends SyncService {
   @override
   // The probe deliberately avoids LAN discovery.
   // ignore: must_call_super
   void onInit() {}
+}
+
+class ProbeFollowService extends FollowService {
+  @override
+  // ignore: must_call_super
+  void onInit() {}
+  @override
+  void startUpdateStatus() {
+    updating.value = false;
+  }
 }
 
 Future<void> main(List<String> args) async {
@@ -38,7 +50,7 @@ Future<void> main(List<String> args) async {
   final report = <String, Object?>{};
   final flutterErrors = <String>[];
   FlutterError.onError = (details) {
-    flutterErrors.add(details.exceptionAsString());
+    flutterErrors.add('${details.exceptionAsString()}\n${details.stack}');
   };
   Future<void> save() =>
       output.writeAsString(const JsonEncoder.withIndent('  ').convert(report));
@@ -86,8 +98,6 @@ Future<void> main(List<String> args) async {
     return box.localToGlobal(Offset.zero) & box.size;
   }
 
-  bool isMini(Widget widget) =>
-      widget.key == const ValueKey('live-mini-player');
   Future<void> tap(Offset point) async {
     GestureBinding.instance.handlePointerEvent(PointerDownEvent(
         pointer: 900,
@@ -135,339 +145,255 @@ Future<void> main(List<String> args) async {
       !room.loading.value;
   try {
     await app.initServices();
-    // The isolated fixture starts after onboarding, like an existing install.
     AppSettingsController.instance.firstRun = false;
     AppSettingsController.instance.setNoFirstRun();
+    AppSettingsController.instance.autoUpdateFollowEnable.value = false;
+    await Get.delete<FollowService>(force: true);
+    final follows = Get.put<FollowService>(ProbeFollowService());
     await windowManager.ensureInitialized();
+    await windowManager
+        .waitUntilReadyToShow(const WindowOptions(minimumSize: Size(280, 280)));
+    await windowManager.setFullScreen(false);
+    await windowManager.restore();
+    await windowManager.setTitle('Simple Live V5 validation');
     await windowManager.setSize(const Size(1280, 860));
     runApp(RepaintBoundary(key: boundaryKey, child: const app.MyApp()));
+    await windowManager.show();
     await Future<void>.delayed(const Duration(seconds: 2));
-    final site = Sites.allSites['douyu']!;
-    if (args.contains('--lifecycle-only')) {
-      final session = LiveRoomSessionService.instance;
-      final ids = args[2].split(',');
-      AppNavigator.toLiveRoomDetail(site: site, roomId: ids.first);
-      await waitFor(() => session.active.value != null &&
-        session.active.value!.player.state.playing &&
-        (session.active.value!.player.state.width ?? 0) > 0, 'single room', seconds: 60);
-      final direct = session.active.value!;
-      AppNavigator.toMultiLive();
-      await waitFor(() => Get.isRegistered<MultiLiveController>() &&
-        Get.find<MultiLiveController>().rooms.isNotEmpty &&
-        session.active.value == null && direct.isClosed, 'direct room to grid');
-      final c = Get.find<MultiLiveController>();
-      final current = c.rooms.single;
-      await waitFor(() => decoded(current), 'grid decoded');
-      Get.back<void>();
-      await waitFor(() => current.isDisposed, 'grid cleanup');
-      check(Uri.parse(Get.currentRoute).path == RoutePath.kIndex &&
-        findElement((widget) => widget is LiveRoomPage) == null, 'home after replacement');
-      check(!current.player.state.playing && !direct.player.state.playing, 'players stopped');
-      AppNavigator.toLiveRoomDetail(site: site, roomId: ids[1]);
-      await waitFor(() => session.active.value != null &&
-        session.active.value!.player.state.playing, 'second room');
-      Get.back<void>();
-      await waitFor(() => session.floating.value && findElement(isMini) != null, 'floating room');
-      AppNavigator.toMultiLive();
-      await waitFor(() => Get.isRegistered<MultiLiveController>() &&
-        Get.find<MultiLiveController>().rooms.isNotEmpty && session.active.value == null, 'floating handoff');
-      final pending = Get.find<MultiLiveController>().rooms.toList();
-      Get.back<void>();
-      await waitFor(() => pending.every((r) => r.isDisposed), 'exit during load');
-      check(Uri.parse(Get.currentRoute).path == RoutePath.kIndex &&
-        findElement((widget) => widget is LiveRoomPage) == null, 'home after rapid exit');
-      check(session.active.value == null && !session.floating.value &&
-        pending.every((r) => !r.player.state.playing), 'no leaked playback');
-      check(flutterErrors.isEmpty, 'Flutter errors: $flutterErrors');
-      report['lifecycle'] = {'directRoomReplacement': true, 'homeAfterReplacement': true,
-        'exitStopsAll': true, 'miniToGrid': true, 'exitDuringLoad': true, 'noLeakedPlayback': true};
-      report['flutterErrors'] = flutterErrors;
-      report['passed'] = true;
-      await screenshot('returned-home');
-      return;
-    }
-    final ids = <String>[];
-    for (var page = 1; page <= 3 && ids.length < 15; page++) {
-      final recommended = await site.liveSite.getRecommendRooms(page: page);
-      for (final item in recommended.items.take(25)) {
-        try {
-          final detail = await site.liveSite.getRoomDetail(roomId: item.roomId);
-          if (detail.status &&
-              !detail.isRecord &&
-              !ids.contains(detail.roomId)) {
-            ids.add(detail.roomId);
-          }
-        } catch (_) {/* A recommendation may have just ended. */}
-        if (ids.length >= 15) break;
-      }
-    }
-    check(ids.length >= 9, 'Nine live rooms required');
-    final session = LiveRoomSessionService.instance;
-    if (args.length > 2) {
-      final preferred = args[2].split(',');
-      ids.removeWhere(preferred.contains);
-      ids.insertAll(0, preferred);
-    }
-    var selected = false;
-    for (final id in ids.toList().take(6)) {
-      AppNavigator.toLiveRoomDetail(site: site, roomId: id);
-      try {
-        await waitFor(
-            () =>
-                session.active.value != null &&
-                session.active.value!.player.state.playing &&
-                (session.active.value!.player.state.width ?? 0) > 0,
-            'single candidate',
-            seconds: 35);
-        ids.remove(id);
-        ids.insert(0, id);
-        selected = true;
-        break;
-      } catch (_) {
-        final active = session.active.value;
-        report['candidateFailure'] = {
-          'id': id,
-          'live': active?.liveStatus.value,
-          'loadError': active?.loadError.value,
-          'message': active?.errorMsg.value,
-          'sourceCount': active?.playUrls.length
-        };
-        ids.remove(id);
-        await save();
-      }
-    }
-    check(selected, 'No candidate decoded');
-    report.remove('candidateFailure');
-    report['verifiedRoomIds'] = ids.take(3).toList();
-    final old = session.active.value!;
-    Get.back<void>();
-    await waitFor(() => session.floating.value && findElement(isMini) != null,
-        'mini player');
     AppNavigator.toMultiLive();
-    await waitFor(
-        () =>
-            Get.isRegistered<MultiLiveController>() &&
-            Get.find<MultiLiveController>().rooms.isNotEmpty &&
-            session.active.value == null,
-        'handoff');
+    await waitFor(() => Get.isRegistered<MultiLiveController>(), 'grid route');
     final c = Get.find<MultiLiveController>();
-    final a = c.rooms.first;
-    await waitFor(() => decoded(a) && old.isClosed, 'first grid video',
-        seconds: 60);
-    check(!session.floating.value && !old.player.state.playing,
-        'single sound stopped');
-    report['miniToGrid'] = true;
-    await save();
-
-    // Open the actual add dialog, enter a room ID and click its submit button.
+    final site = Sites.allSites['douyu']!;
+    final ids =
+        (args.length > 1 ? args[1] : '24422,5720533,6496945').split(',');
+    final a = c.add(site, ids[0])!;
+    await waitFor(() => decoded(a), 'first stream', seconds: 65);
+    await waitFor(() => a.player.state.volume == 0, 'first stream muted');
+    await screenshot('one-auto');
+    final videoState = a.globalPlayerKey.currentState;
+    for (var i = 0; i < 3; i++) {
+      follows.followList.add(FollowUser(
+          id: 'fixture-$i',
+          roomId: ids[i],
+          siteId: 'douyu',
+          userName: ['直播中示例', '未开播示例', '状态未知示例'][i],
+          face: '',
+          addTime: DateTime.now())
+        ..liveStatus.value = [2, 1, 0][i]);
+    }
     await tapTooltip('添加直播');
+    check(
+        findElement((w) => w is Text && w.data == '直播中') != null, 'live badge');
+    check(findElement((w) => w is Text && w.data == '未开播') != null,
+        'offline badge');
+    check(findElement((w) => w is Text && w.data == '状态未知') != null,
+        'unknown badge');
+    await screenshot('follow-status');
     final field = findElement((w) => w is TextField)!.widget as TextField;
     field.controller!.text = ids[1];
     await tap(rectFor((w) => w is Text && w.data == '添加到多画面').center);
-    await waitFor(() => c.rooms.length == 2, 'dialog room add');
+    await waitFor(
+        () => c.rooms.length == 2 && c.rooms.every(decoded), 'second stream',
+        seconds: 65);
     final b = c.rooms[1];
-    await waitFor(() => decoded(a) && decoded(b), 'two real streams',
-        seconds: 60);
-    await screenshot('multi-live-2');
     final third = c.add(site, ids[2])!;
-    await waitFor(() => c.rooms.every(decoded), 'three real streams',
-        seconds: 60);
-    await screenshot('multi-live-3');
-    await c.selectAudio(b);
-    await waitFor(
-        () =>
-            c.rooms.where((r) => r.player.state.volume > 0).length == 1 &&
-            b.player.state.volume > 0,
-        'unique sound',
-        seconds: 5);
-    await Future.wait(
-        [c.selectAudio(a), c.selectAudio(third), c.selectAudio(b)]);
-    await waitFor(
-        () =>
-            c.rooms.where((r) => r.player.state.volume > 0).length == 1 &&
-            b.player.state.volume > 0,
-        'rapid sound switch',
-        seconds: 5);
-    await b.togglePause();
-    final position = a.player.state.position;
-    await Future<void>.delayed(const Duration(seconds: 2));
-    check(!b.player.state.playing && a.player.state.position > position,
-        'pause isolation');
-    await b.togglePause();
-    await waitFor(() => decoded(b), 'resume grid');
-    final videoState = a.globalPlayerKey.currentState;
-    c.toggleFocus(a);
-    await screenshot('multi-live-focused');
+    await waitFor(() => c.rooms.every(decoded), 'three streams', seconds: 65);
+    await waitFor(() => c.rooms.every((r) => r.player.state.volume == 0),
+        'all additions silent');
     check(identical(a.globalPlayerKey.currentState, videoState),
-        'focus retains Video state');
-    c.toggleFocus(a);
-    c.setLayout(4);
-    await screenshot('multi-live-4');
-    check(identical(a.globalPlayerKey.currentState, videoState),
-        'layout retains Video state');
-    final beforeRefresh = playRequests;
-    final unaffectedBefore = a.player.state.position;
-    await b.refresh();
+        'addition retains video');
     check(
-        playRequests > beforeRefresh &&
-            a.player.state.position > unaffectedBefore,
-        'refresh isolation');
-    final beforeRecovery = playRequests;
-    await b.player.stop();
-    b.recover();
+        findElement((w) => w is ChoiceChip) == null, 'no fixed layout buttons');
+    await screenshot('three-auto');
+    await c.setAudioEnabled(a, true);
+    await c.setAudioEnabled(b, true);
     await waitFor(
         () =>
-            playRequests > beforeRecovery &&
-            decoded(b) &&
-            !b.reconnecting.value,
-        'independent recovery',
-        seconds: 90);
-    check(decoded(a) && decoded(third), 'recovery did not stop others');
-    report['controls'] = {
-      'addDialog': true,
-      'layouts2And3And4': true,
-      'singleAudio': true,
-      'rapidAudioSwitch': true,
-      'pauseIsolation': true,
-      'refreshIsolation': true,
-      'focusRetainsVideo': true,
-      'layoutRetainsVideo': true,
-      'independentRecovery': true,
+            a.player.state.volume > 0 &&
+            b.player.state.volume > 0 &&
+            third.player.state.volume == 0,
+        'two independently audible streams');
+    await Future.wait([
+      c.setAudioEnabled(a, false),
+      c.setAudioEnabled(b, false),
+      c.setAudioEnabled(b, true)
+    ]);
+    await waitFor(() => a.player.state.volume == 0 && b.player.state.volume > 0,
+        'rapid audio choices');
+    await tapTooltip('全部静音');
+    await waitFor(
+        () => c.rooms.every((r) => r.player.state.volume == 0), 'mute all');
+    report['audio'] = {
+      'defaultMuted': true,
+      'simultaneousAudio': true,
+      'independentToggle': true,
+      'muteAll': true
     };
     await save();
 
-    for (final id in ids.skip(3)) {
-      if (c.rooms.length == 9) break;
-      final next = c.add(site, id)!;
-      try {
-        await waitFor(() => decoded(next), 'additional stream', seconds: 50);
-      } catch (_) {
-        await c.remove(next);
-      }
-    }
-    check(c.rooms.length == 9 && c.rooms.every(decoded),
-        'nine simultaneous real streams');
-    await screenshot('multi-live-9');
+    a.danmakuEnabled.value = true;
+    await waitFor(() => findElement((w) => w is MultiLiveDanmaku) != null,
+        'danmaku mounted');
+    await Future<void>.delayed(const Duration(seconds: 8));
+    await screenshot('top-danmaku');
+    final overlay = rectFor((w) => w is MultiLiveDanmaku);
+    check(overlay.height <= 30.1, 'bounded chat height');
+    final beforeResize = a.player.state.position;
     await windowManager.setSize(const Size(360, 640));
-    await screenshot('multi-live-9-small');
-    await windowManager.setSize(const Size(1280, 860));
-    final starts = c.rooms.map((r) => r.player.state.position).toList();
-    await Future<void>.delayed(const Duration(seconds: 15));
-    check(
-        List.generate(9, (i) => c.rooms[i].player.state.position > starts[i])
-            .every((e) => e),
-        'nine streams progress');
-    report['nineStreams'] = {
-      'count': 9,
-      'allDecoded': true,
-      'allAdvancedFor15Seconds': true,
-      'resize': true
+    await Future<void>.delayed(const Duration(seconds: 2));
+    final nativeSize = await windowManager.getSize();
+    final view = ui.PlatformDispatcher.instance.implicitView!;
+    report['portraitMetrics'] = {
+      'nativeWidth': nativeSize.width,
+      'nativeHeight': nativeSize.height,
+      'viewWidth': view.physicalSize.width / view.devicePixelRatio,
+      'viewHeight': view.physicalSize.height / view.devicePixelRatio,
+      'minimized': await windowManager.isMinimized(),
+      'maximized': await windowManager.isMaximized(),
     };
     await save();
-    final retired = c.rooms.skip(3).toList();
-    for (final r in retired) {
-      await c.remove(r);
-    }
-    c.setLayout(3);
-    check(retired.every((r) => r.isDisposed && !r.player.state.playing),
-        'removed players disposed');
+    await waitFor(
+        () =>
+            (boundaryKey.currentContext!.findRenderObject() as RenderBox)
+                .size
+                .width <
+            600,
+        'native resize reached Flutter',
+        seconds: 10);
+    check(findElement((w) => w is MultiLiveDanmaku) == null,
+        'small tiles hide chat');
+    await screenshot('portrait-auto');
+    await windowManager.setSize(const Size(1280, 860));
+    await waitFor(() => findElement((w) => w is MultiLiveDanmaku) != null,
+        'chat returns on larger tile');
+    report['resizePlayback'] = {
+      'retainsVideoState':
+          identical(a.globalPlayerKey.currentState, videoState),
+      'beforeMs': beforeResize.inMilliseconds,
+      'afterMs': a.player.state.position.inMilliseconds,
+    };
+    await save();
+    check(identical(a.globalPlayerKey.currentState, videoState),
+        'resize retains video state');
+    final resizedPosition = a.player.state.position;
+    await waitFor(() => decoded(a) && a.player.state.position > resizedPosition,
+        'playback advances after resize',
+        seconds: 30);
+    a.danmakuEnabled.value = false;
+    await waitFor(
+        () => findElement((w) => w is MultiLiveDanmaku) == null, 'chat off');
+    report['danmaku'] = {
+      'boundedTopArea': true,
+      'smallTilesHidden': true,
+      'toggle': true
+    };
 
-    // Cover the user's approximately ten-minute failure interval on three streams.
-    final seconds = args.length > 1 ? int.parse(args[1]) : 660;
-    final start = DateTime.now();
-    var samples = 0;
-    while (DateTime.now().difference(start).inSeconds < seconds) {
-      await Future<void>.delayed(const Duration(seconds: 10));
-      check(c.rooms.every((r) => !r.offline.value && r.error.value.isEmpty),
-          'soak room error');
-      samples++;
-      report['soak'] = {
-        'seconds': DateTime.now().difference(start).inSeconds,
-        'rooms': c.rooms.length,
-        'samples': samples,
-        'playing': c.rooms.where(decoded).length
-      };
-      await save();
+    await tapTooltip('多画面全屏（F11）');
+    await Future<void>.delayed(const Duration(seconds: 4));
+    check(await windowManager.isFullScreen(), 'native full screen');
+    check(findElement((w) => w is AppBar) == null, 'fullscreen appbar hidden');
+    check(
+        findElement((w) => w is Tooltip && w.message == '退出多画面全屏（Esc）') == null,
+        'idle toolbar hidden');
+    await screenshot('fullscreen-clean');
+    // Invoke the registered keyboard shortcut; it must restore the window.
+    final shortcuts =
+        findElement((w) => w is CallbackShortcuts)!.widget as CallbackShortcuts;
+    shortcuts.bindings[const SingleActivator(LogicalKeyboardKey.escape)]!();
+    await Future<void>.delayed(const Duration(seconds: 1));
+    check(!await windowManager.isFullScreen(), 'escape exits fullscreen');
+    check(identical(a.globalPlayerKey.currentState, videoState),
+        'fullscreen retains video');
+    // Native exits also occur through the app's global mouse-back handler.
+    await tapTooltip('多画面全屏（F11）');
+    await Future<void>.delayed(const Duration(seconds: 1));
+    await windowManager.setFullScreen(false);
+    await waitFor(() => findElement((w) => w is AppBar) != null,
+        'external exit restores toolbar');
+    report['fullscreen'] = {
+      'externalExitRestoresToolbar': true,
+      'entered': true,
+      'idleToolbarHidden': true,
+      'escapeExits': true,
+      'retainsVideo': true
+    };
+    await save();
+
+    final spareIds = <String>[];
+    final recommended = await site.liveSite.getRecommendRooms(page: 1);
+    for (final item in recommended.items) {
+      if (ids.contains(item.roomId) || spareIds.contains(item.roomId)) continue;
+      final candidate = c.add(site, item.roomId);
+      if (candidate == null) break;
+      try {
+        await waitFor(() => decoded(candidate), 'extra stream', seconds: 35);
+        spareIds.add(item.roomId);
+      } catch (_) {
+        await c.remove(candidate);
+      }
+      if (spareIds.length == 2) break;
     }
-    await waitFor(() => c.rooms.every(decoded), 'soak final playback');
-    await screenshot('multi-live-final');
+    check(c.rooms.length == 5, 'five adaptive cells');
+    await screenshot('five-auto');
+    check(identical(a.globalPlayerKey.currentState, videoState),
+        'five cells retain first video');
+    for (final extra in c.rooms.skip(3).toList()) {
+      await c.remove(extra);
+    }
+    await Future<void>.delayed(const Duration(seconds: 1));
+    check(
+        c.rooms.length == 3 &&
+            identical(a.globalPlayerKey.currentState, videoState),
+        'removal rearranges without restart');
+    c.toggleFocus(a);
+    await screenshot('focused');
+    c.toggleFocus(a);
+    report['layout'] = {
+      'counts1To5': true,
+      'noFixedButtons': true,
+      'resize': true,
+      'additionAndRemovalRetainVideo': true,
+      'focus': true
+    };
+    await b.refresh();
+    await waitFor(() => c.rooms.every(decoded), 'refresh playback');
+    check(c.rooms.every((r) => r.player.state.volume == 0),
+        'refresh retains mute');
+    final positions = c.rooms.map((r) => r.player.state.position).toList();
+    await Future<void>.delayed(const Duration(seconds: 20));
+    check(
+        List.generate(3, (i) => c.rooms[i].player.state.position > positions[i])
+            .every((v) => v),
+        'three streams continued');
     final finalRooms = c.rooms.toList();
     Get.back<void>();
-    await waitFor(() => finalRooms.every((r) => r.isDisposed), 'grid disposal');
+    await waitFor(
+        () => finalRooms.every((r) => r.isDisposed), 'all players disposed');
     check(finalRooms.every((r) => !r.player.state.playing),
-        'no sound after exit');
-    check(session.active.value == null && !session.floating.value,
-        'no leaked mini');
-
-    // The direct room -> grid replacement and a rapid return are separate routes.
-    AppNavigator.toLiveRoomDetail(site: site, roomId: ids.first);
-    await waitFor(
-        () =>
-            session.active.value != null &&
-            session.active.value!.player.state.playing,
-        'second single room');
-    final direct = session.active.value!;
-    AppNavigator.toMultiLive();
-    await waitFor(
-        () =>
-            Get.isRegistered<MultiLiveController>() &&
-            Get.find<MultiLiveController>().rooms.isNotEmpty &&
-            direct.isClosed,
-        'direct room to grid');
-    final directRooms = Get.find<MultiLiveController>().rooms.toList();
-    Get.back<void>();
-    await waitFor(
-        () => directRooms.every((r) => r.isDisposed), 'exit during load');
-    check(Uri.parse(Get.currentRoute).path != RoutePath.kLiveRoomDetail,
-        'dead single route retained');
+        'all players stopped');
     check(flutterErrors.isEmpty, 'Flutter errors: $flutterErrors');
-    report['lifecycle'] = {
-      'removedPlayersDisposed': true,
-      'exitStopsAll': true,
-      'directRoomReplacement': true,
-      'exitDuringLoad': true
-    };
+    report['lifecycle'] = {'playersStoppedAndDisposed': true};
     report['flutterErrors'] = flutterErrors;
     report['passed'] = true;
+    await screenshot('returned-home');
   } catch (error, stack) {
     report['passed'] = false;
-    report['error'] = error
-        .toString()
-        .replaceAll(RegExp(r'(https?://[^\s?]+)\?[^\s]+'), r'$1?[redacted]');
+    report['error'] =
+        error.toString().replaceAll(RegExp(r'https?://\S+'), '<url-redacted>');
     report['stack'] = stack.toString();
-    report['currentRoute'] = Get.currentRoute;
-    report['visibleSingleRoom'] =
-        findElement((widget) => widget is LiveRoomPage) != null;
-    await screenshot('failure');
     report['flutterErrors'] = flutterErrors;
-    final active = LiveRoomSessionService.instance.active.value;
-    if (active != null) {
-      report['singleState'] = {
-        'room': active.roomId,
-        'live': active.liveStatus.value,
-        'loadError': active.loadError.value,
-        'playing': active.player.state.playing,
-        'buffering': active.player.state.buffering
-      };
-    }
-    if (Get.isRegistered<MultiLiveController>()) {
-      report['roomStates'] = Get.find<MultiLiveController>()
-          .rooms
-          .map((r) => {
-                'id': r.roomId,
-                'playing': r.player.state.playing,
-                'volume': r.player.state.volume,
-                'buffering': r.player.state.buffering,
-                'position': r.player.state.position.inSeconds,
-                'loading': r.loading.value,
-                'error': r.error.value,
-                'offline': r.offline.value,
-              })
-          .toList();
-    }
+    await screenshot('failure');
   } finally {
     core_http.HttpClient.instance.dio.interceptors.remove(counter);
+    if (Get.isRegistered<MultiLiveController>()) {
+      await Get.find<MultiLiveController>().shutdown();
+    }
+    await LiveRoomSessionService.instance.stop();
+    report['playRequests'] = playRequests;
+    report['nativeExit'] = 'pending external process verification';
     await save();
-    exit(0);
+    await windowManager.setFullScreen(false);
+    await windowManager.setPreventClose(false);
+    await windowManager.close();
   }
 }

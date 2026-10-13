@@ -190,6 +190,7 @@ class FollowService extends GetxService {
   }
 
   void startUpdateStatus() async {
+    if (updating.value || followList.isEmpty) return;
     updatedCount = 0;
     updating.value = true;
 

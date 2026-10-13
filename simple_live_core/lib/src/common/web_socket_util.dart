@@ -2,11 +2,7 @@ import 'dart:async';
 
 import 'package:web_socket_channel/io.dart';
 
-enum SocketStatus {
-  connected,
-  failed,
-  closed,
-}
+enum SocketStatus { connected, failed, closed }
 
 class WebScoketUtils {
   SocketStatus status = SocketStatus.closed;
@@ -60,8 +56,11 @@ class WebScoketUtils {
 
   StreamSubscription<dynamic>? streamSubscription;
 
+  int _generation = 0;
+
   void connect({bool retry = false}) async {
     close();
+    final generation = _generation;
     try {
       var wsurl = url;
       if (backupUrl != null && backupUrl!.isNotEmpty && retry) {
@@ -73,9 +72,15 @@ class WebScoketUtils {
         headers: headers,
       );
 
-      await webSocket?.ready;
+      final opening = webSocket!;
+      await opening.ready;
+      if (generation != _generation || !identical(opening, webSocket)) {
+        await opening.sink.close();
+        return;
+      }
       ready();
     } catch (e) {
+      if (generation != _generation) return;
       if (!retry) {
         connect(retry: true);
         return;
@@ -95,16 +100,15 @@ class WebScoketUtils {
     );
 
     onReady?.call();
-    initHeartBeat();
+    if (status == SocketStatus.connected) initHeartBeat();
   }
 
   void initHeartBeat() {
-    heartBeatTimer = Timer.periodic(
-      Duration(milliseconds: heartBeatTime),
-      (timer) {
-        onHeartBeat?.call();
-      },
-    );
+    heartBeatTimer = Timer.periodic(Duration(milliseconds: heartBeatTime), (
+      timer,
+    ) {
+      onHeartBeat?.call();
+    });
   }
 
   void receiveMessage(dynamic data) {
@@ -133,6 +137,7 @@ class WebScoketUtils {
   }
 
   void close() {
+    _generation++;
     status = SocketStatus.closed;
 
     streamSubscription?.cancel();

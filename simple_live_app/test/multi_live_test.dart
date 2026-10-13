@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:get/get.dart';
+import 'package:simple_live_app/services/live_room_session_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/multi_live/multi_live_controller.dart';
@@ -45,91 +48,115 @@ void main() {
       MultiLiveController(
           createRoom: FakeGridRoom.new, afterFrame: frame ?? () async {});
 
-  test('grows through 2/3/4/9; never hides active streams or exceeds capacity',
-      () async {
+  testWidgets('empty grid fills available page before the first stream',
+      (tester) async {
+    Get.testMode = true;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const channel =
+        'dev.flutter.pigeon.wakelock_plus_platform_interface.WakelockPlusApi.toggle';
+    messenger.setMockMessageHandler(channel,
+        (_) async => const StandardMessageCodec().encodeMessage([null]));
+    Get.put(MultiLiveController(afterFrame: () async {}));
+    Get.put(LiveRoomSessionService());
+    await tester.pumpWidget(const GetMaterialApp(home: MultiLivePage()));
+    await tester.pump();
+    final button = find.byWidgetPredicate((widget) => widget is FilledButton);
+    expect(button, findsOneWidget);
+    // Scaffold's body starts below the 56px app bar on the default 800x600 surface.
+    expect(tester.getCenter(button).dx, closeTo(400, 1));
+    expect(tester.getCenter(button).dy, closeTo(328, 1));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    Get.reset();
+    messenger.setMockMessageHandler(channel, null);
+  });
+
+  test('adds up to nine with all rooms muted, reuses duplicates', () async {
     final c = grid();
     for (var i = 1; i <= 9; i++) {
       expect(c.add(site, '$i'), isNotNull);
-      expect(
-          c.layout.value,
-          i <= 2
-              ? 2
-              : i <= 4
-                  ? i
-                  : 9);
     }
+    expect(c.rooms.length, 9);
+    expect(c.audibleRooms, isEmpty);
+    expect(c.rooms.cast<FakeGridRoom>().every((r) => r.volume == 0), isTrue);
     expect(c.add(site, '10'), isNull);
-    expect(c.setLayout(4), isFalse);
     expect(c.add(site, '1'), same(c.rooms.first));
     expect((c.rooms.first as FakeGridRoom).starts, 1);
     await c.clear();
-    expect(c.setLayout(3), isTrue);
+    expect(c.rooms, isEmpty);
     await c.shutdown();
     expect(c.add(site, 'new'), isNull);
   });
 
-  test('sound switching is serialized; muted grids keep added rooms silent',
+  test('independent audio, rapid toggles, mute all and silent additions',
       () async {
     final c = grid();
     final a = c.add(site, 'a')! as FakeGridRoom;
     final b = c.add(site, 'b')! as FakeGridRoom;
-    await c.selectAudio(a);
-    expect([a.volume, b.volume], [70, 0]);
+    await c.setAudioEnabled(a, true);
+    await c.setAudioEnabled(b, true);
+    expect([a.volume, b.volume], [70, 70]);
+    final added = c.add(site, 'c')! as FakeGridRoom;
+    expect(added.volume, 0);
     final gate = Completer<void>();
     a.volumeGate = gate;
-    final first = c.selectAudio(b);
+    final first = c.setAudioEnabled(a, false);
     await Future<void>.delayed(Duration.zero);
-    final second = c.selectAudio(a);
+    final second = c.setAudioEnabled(a, true);
+    final third = c.setAudioEnabled(b, false);
     gate.complete();
-    await Future.wait([first, second]);
-    expect([a.volume, b.volume], [70, 0]);
-    await c.selectAudio(null);
-    final added = c.add(site, 'c')! as FakeGridRoom;
-    await Future<void>.delayed(Duration.zero);
+    await Future.wait([first, second, third]);
+    expect([a.volume, b.volume, added.volume], [70, 0, 0]);
+    await c.muteAll();
+    expect(c.audibleRooms, isEmpty);
     expect([a.volume, b.volume, added.volume], [0, 0, 0]);
-    expect(c.audioRoom.value, isNull);
     await c.shutdown();
   });
 
-  test('removing audible focused room stops now and disposes after frame',
+  test('removal retains other sound choices and disposes after unmount',
       () async {
     final frame = Completer<void>();
     final c = grid(frame: () => frame.future);
     final a = c.add(site, 'a')! as FakeGridRoom;
     final b = c.add(site, 'b')! as FakeGridRoom;
-    await c.selectAudio(a);
+    await c.setAudioEnabled(a, true);
+    await c.setAudioEnabled(b, true);
     c.toggleFocus(a);
     final removing = c.remove(a);
     expect(a.stops, 1);
     expect(a.disposals, 0);
     expect(c.focusedRoom.value, isNull);
-    expect(c.audioRoom.value, same(b));
+    expect(c.audibleRooms, {b});
+    expect(b.volume, 70);
     final closing = c.shutdown();
-    expect(b.stops, 1);
     frame.complete();
     await Future.wait([removing, closing]);
     expect([a.disposals, b.disposals], [1, 1]);
     expect([a.volume, b.volume], [0, 0]);
   });
 
-  test('focus and layout changes preserve players and selected sound',
-      () async {
+  test('adding a room reveals the new layout without changing sound', () async {
     final c = grid();
     final a = c.add(site, 'a')!;
-    final b = c.add(site, 'b')!;
-    await c.selectAudio(b);
+    await c.setAudioEnabled(a, true);
     c.toggleFocus(a);
-    expect(c.focusedRoom.value, same(a));
-    c.setLayout(9);
+    c.add(site, 'b');
     expect(c.focusedRoom.value, isNull);
-    expect(c.audioRoom.value, same(b));
-    expect(c.rooms, [a, b]);
+    expect(c.audibleRooms, {a});
     await c.shutdown();
   });
 
-  test('all supported layouts cover the viewport without overlap', () {
-    for (final count in MultiLiveController.layouts) {
-      for (final size in [const Size(1200, 650), const Size(360, 650)]) {
+  test('every count from one to nine fills wide and tall viewports', () {
+    expect(multiLiveRects(0, const Size(1200, 650)), isEmpty);
+    for (var count = 1; count <= 9; count++) {
+      for (final size in [
+        const Size(1200, 650),
+        const Size(360, 650),
+        const Size(3440, 1440),
+        const Size(701, 399)
+      ]) {
         final rects = multiLiveRects(count, size);
         expect(rects.length, count);
         var area = 0.0;
@@ -147,6 +174,20 @@ void main() {
         }
         expect(area, closeTo(size.width * size.height, .001));
       }
+    }
+  });
+
+  testWidgets('unknown status never appears as offline', (tester) async {
+    for (final entry in <(int, bool, String)>[
+      (2, false, '直播中'),
+      (1, false, '未开播'),
+      (0, true, '查询中…'),
+      (0, false, '状态未知')
+    ]) {
+      await tester.pumpWidget(MaterialApp(
+          home: FollowLiveStatus(status: entry.$1, updating: entry.$2)));
+      expect(find.text(entry.$3), findsOneWidget);
+      if (entry.$1 == 0) expect(find.text('未开播'), findsNothing);
     }
   });
 
