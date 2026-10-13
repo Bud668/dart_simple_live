@@ -136,12 +136,56 @@ Future<void> main(List<String> args) async {
   try {
     await app.initServices();
     // The isolated fixture starts after onboarding, like an existing install.
+    AppSettingsController.instance.firstRun = false;
     AppSettingsController.instance.setNoFirstRun();
     await windowManager.ensureInitialized();
     await windowManager.setSize(const Size(1280, 860));
     runApp(RepaintBoundary(key: boundaryKey, child: const app.MyApp()));
     await Future<void>.delayed(const Duration(seconds: 2));
     final site = Sites.allSites['douyu']!;
+    if (args.contains('--lifecycle-only')) {
+      final session = LiveRoomSessionService.instance;
+      final ids = args[2].split(',');
+      AppNavigator.toLiveRoomDetail(site: site, roomId: ids.first);
+      await waitFor(() => session.active.value != null &&
+        session.active.value!.player.state.playing &&
+        (session.active.value!.player.state.width ?? 0) > 0, 'single room', seconds: 60);
+      final direct = session.active.value!;
+      AppNavigator.toMultiLive();
+      await waitFor(() => Get.isRegistered<MultiLiveController>() &&
+        Get.find<MultiLiveController>().rooms.isNotEmpty &&
+        session.active.value == null && direct.isClosed, 'direct room to grid');
+      final c = Get.find<MultiLiveController>();
+      final current = c.rooms.single;
+      await waitFor(() => decoded(current), 'grid decoded');
+      Get.back<void>();
+      await waitFor(() => current.isDisposed, 'grid cleanup');
+      check(Uri.parse(Get.currentRoute).path == RoutePath.kIndex &&
+        findElement((widget) => widget is LiveRoomPage) == null, 'home after replacement');
+      check(!current.player.state.playing && !direct.player.state.playing, 'players stopped');
+      AppNavigator.toLiveRoomDetail(site: site, roomId: ids[1]);
+      await waitFor(() => session.active.value != null &&
+        session.active.value!.player.state.playing, 'second room');
+      Get.back<void>();
+      await waitFor(() => session.floating.value && findElement(isMini) != null, 'floating room');
+      AppNavigator.toMultiLive();
+      await waitFor(() => Get.isRegistered<MultiLiveController>() &&
+        Get.find<MultiLiveController>().rooms.isNotEmpty && session.active.value == null, 'floating handoff');
+      final pending = Get.find<MultiLiveController>().rooms.toList();
+      Get.back<void>();
+      await waitFor(() => pending.every((r) => r.isDisposed), 'exit during load');
+      check(Uri.parse(Get.currentRoute).path == RoutePath.kIndex &&
+        findElement((widget) => widget is LiveRoomPage) == null, 'home after rapid exit');
+      check(session.active.value == null && !session.floating.value &&
+        pending.every((r) => !r.player.state.playing), 'no leaked playback');
+      check(flutterErrors.isEmpty, 'Flutter errors: $flutterErrors');
+      report['lifecycle'] = {'directRoomReplacement': true, 'homeAfterReplacement': true,
+        'exitStopsAll': true, 'miniToGrid': true, 'exitDuringLoad': true, 'noLeakedPlayback': true};
+      report['flutterErrors'] = flutterErrors;
+      report['passed'] = true;
+      await screenshot('returned-home');
+      return;
+    }
     final ids = <String>[];
     for (var page = 1; page <= 3 && ids.length < 15; page++) {
       final recommended = await site.liveSite.getRecommendRooms(page: page);
